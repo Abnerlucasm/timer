@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { TimerConfig, ActiveTimer } from '../types/Timer';
 import { storage } from '../utils/storage';
 import { NotificationManager } from '../utils/notifications';
+import { Button } from './ui/button';
+import { ArrowLeft, Play, Pause, Square, Volume2, Eye, X } from 'lucide-react';
 
 interface TimerDisplayProps {
   config: TimerConfig;
@@ -20,18 +22,42 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
   const notificationManager = useRef(new NotificationManager());
 
   useEffect(() => {
-    // Carrega timer ativo do localStorage se existir
-    const savedTimer = storage.getActiveTimer();
-    if (savedTimer && savedTimer.config.id === config.id) {
-      setActiveTimer(savedTimer);
-      setRemainingTime(savedTimer.remainingTime);
-      setIsRunning(savedTimer.isRunning);
-      setIsPaused(savedTimer.isPaused);
-    } else {
-      // Cria novo timer
+    try {
+      // Carrega timer ativo do localStorage se existir
+      const savedTimer = storage.getActiveTimer();
+      if (savedTimer && savedTimer.config.id === config.id) {
+        // Converte as datas de string para Date se necessário
+        const timerWithDates = {
+          ...savedTimer,
+          startTime: new Date(savedTimer.startTime),
+          endTime: new Date(savedTimer.endTime)
+        };
+        setActiveTimer(timerWithDates);
+        setRemainingTime(savedTimer.remainingTime);
+        setIsRunning(savedTimer.isRunning);
+        setIsPaused(savedTimer.isPaused);
+      } else {
+        // Cria novo timer
+        const now = new Date();
+        const endTime = new Date(now.getTime() + config.duration * 60 * 1000);
+        const newTimer: ActiveTimer = {
+          id: Date.now().toString(),
+          config,
+          startTime: now,
+          endTime,
+          isRunning: false,
+          isPaused: false,
+          remainingTime: config.duration * 60 * 1000
+        };
+        setActiveTimer(newTimer);
+        setRemainingTime(newTimer.remainingTime);
+      }
+    } catch (error) {
+      console.error('Erro ao inicializar timer:', error);
+      // Fallback: cria timer básico
       const now = new Date();
       const endTime = new Date(now.getTime() + config.duration * 60 * 1000);
-      const newTimer: ActiveTimer = {
+      const fallbackTimer: ActiveTimer = {
         id: Date.now().toString(),
         config,
         startTime: now,
@@ -40,8 +66,8 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
         isPaused: false,
         remainingTime: config.duration * 60 * 1000
       };
-      setActiveTimer(newTimer);
-      setRemainingTime(newTimer.remainingTime);
+      setActiveTimer(fallbackTimer);
+      setRemainingTime(fallbackTimer.remainingTime);
     }
 
     return () => {
@@ -52,52 +78,89 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
   }, [config]);
 
   const handleTimerComplete = useCallback(async () => {
-    setIsRunning(false);
-    setIsPaused(false);
-    const message = `${config.name} concluído!`;
-    await notificationManager.current.notify(
-      message, 
-      config.notifications.soundType,
-      config.notifications.customAudioFile
-    );
-    
-    // Mostra vídeo se configurado
-    if (config.videoFile) {
-      setShowVideo(true);
-      // Tenta abrir em fullscreen automaticamente após um pequeno delay
-      setTimeout(() => {
-        const video = document.querySelector('video');
-        if (video) {
-          if (video.requestFullscreen) {
-            video.requestFullscreen().catch(console.error);
-          } else if ((video as any).webkitRequestFullscreen) {
-            (video as any).webkitRequestFullscreen().catch(console.error);
-          } else if ((video as any).msRequestFullscreen) {
-            (video as any).msRequestFullscreen().catch(console.error);
-          }
+    try {
+      setIsRunning(false);
+      setIsPaused(false);
+      const message = `${config.name} concluído!`;
+      
+      try {
+        await notificationManager.current.notify(
+          message, 
+          config.notifications.soundType,
+          config.notifications.customAudioFile
+        );
+      } catch (notificationError) {
+        console.warn('Erro ao enviar notificação de conclusão:', notificationError);
+        // Continua mesmo se a notificação falhar
+      }
+      
+      // Mostra vídeo se configurado
+      if (config.videoFile) {
+        try {
+          setShowVideo(true);
+          // Tenta abrir em fullscreen automaticamente após um pequeno delay
+          setTimeout(() => {
+            try {
+              const video = document.querySelector('video');
+              if (video) {
+                if (video.requestFullscreen) {
+                  video.requestFullscreen().catch(console.error);
+                } else if ((video as any).webkitRequestFullscreen) {
+                  (video as any).webkitRequestFullscreen().catch(console.error);
+                } else if ((video as any).msRequestFullscreen) {
+                  (video as any).msRequestFullscreen().catch(console.error);
+                }
+              }
+            } catch (fullscreenError) {
+              console.warn('Erro ao abrir vídeo em fullscreen:', fullscreenError);
+            }
+          }, 1000); // Delay de 1 segundo para garantir que o vídeo carregou
+        } catch (videoError) {
+          console.warn('Erro ao mostrar vídeo:', videoError);
         }
-      }, 1000); // Delay de 1 segundo para garantir que o vídeo carregou
+      }
+      
+      try {
+        storage.clearActiveTimer();
+      } catch (storageError) {
+        console.warn('Erro ao limpar timer ativo:', storageError);
+      }
+    } catch (error) {
+      console.error('Erro ao completar timer:', error);
+      // Reset para estado seguro
+      setIsRunning(false);
+      setIsPaused(false);
     }
-    
-    storage.clearActiveTimer();
   }, [config.name, config.videoFile, config.notifications.soundType, config.notifications.customAudioFile]);
 
   useEffect(() => {
-    if (isRunning && !isPaused) {
-      intervalRef.current = setInterval(() => {
-        setRemainingTime((prev: number) => {
-          const newTime = prev - 1000;
-          if (newTime <= 0) {
-            handleTimerComplete();
-            return 0;
+    try {
+      if (isRunning && !isPaused) {
+        intervalRef.current = setInterval(() => {
+          try {
+            setRemainingTime((prev: number) => {
+              const newTime = prev - 1000;
+              if (newTime <= 0) {
+                handleTimerComplete();
+                return 0;
+              }
+              return newTime;
+            });
+          } catch (timerError) {
+            console.error('Erro no timer:', timerError);
+            // Para o timer em caso de erro
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+            }
           }
-          return newTime;
-        });
-      }, 1000);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+        }, 1000);
+      } else {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+        }
       }
+    } catch (error) {
+      console.error('Erro ao configurar timer:', error);
     }
 
     return () => {
@@ -109,56 +172,78 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
 
   // Salva estado do timer no localStorage
   useEffect(() => {
-    if (activeTimer) {
-      const updatedTimer = {
-        ...activeTimer,
-        remainingTime,
-        isRunning,
-        isPaused
-      };
-      storage.saveActiveTimer(updatedTimer);
+    try {
+      if (activeTimer) {
+        const updatedTimer = {
+          ...activeTimer,
+          remainingTime,
+          isRunning,
+          isPaused
+        };
+        storage.saveActiveTimer(updatedTimer);
+      }
+    } catch (error) {
+      console.warn('Erro ao salvar estado do timer:', error);
+      // Continua sem quebrar a aplicação
     }
   }, [activeTimer, remainingTime, isRunning, isPaused]);
 
   // Verifica notificações
   useEffect(() => {
     if (activeTimer && isRunning && !isPaused) {
-      const totalDuration = activeTimer.config.duration * 60 * 1000;
-      const elapsed = totalDuration - remainingTime;
-      
-      // Verifica se deve enviar notificação
-      activeTimer.config.notifications.intervals.forEach((interval: number) => {
-        const intervalMs = interval * 60 * 1000;
-        const timeToNotify = totalDuration - intervalMs;
+      try {
+        const totalDuration = activeTimer.config.duration * 60 * 1000;
+        const elapsed = totalDuration - remainingTime;
         
-        if (elapsed >= timeToNotify && !notificationsSent.has(interval)) {
-          const message = `${activeTimer.config.name}: ${interval} minutos restantes!`;
-          notificationManager.current.notify(
-            message, 
-            activeTimer.config.notifications.soundType,
-            activeTimer.config.notifications.customAudioFile
-          );
-          setNotificationsSent((prev: Set<number>) => new Set(Array.from(prev).concat(interval)));
-        }
-      });
+        // Verifica se deve enviar notificação
+        activeTimer.config.notifications.intervals.forEach((interval: number) => {
+          try {
+            const intervalMs = interval * 60 * 1000;
+            const timeToNotify = totalDuration - intervalMs;
+            
+            if (elapsed >= timeToNotify && !notificationsSent.has(interval)) {
+              const message = `${activeTimer.config.name}: ${interval} minutos restantes!`;
+              notificationManager.current.notify(
+                message, 
+                activeTimer.config.notifications.soundType,
+                activeTimer.config.notifications.customAudioFile
+              );
+              setNotificationsSent((prev: Set<number>) => new Set(Array.from(prev).concat(interval)));
+            }
+          } catch (notificationError) {
+            console.warn('Erro ao enviar notificação:', notificationError);
+            // Continua sem quebrar o timer
+          }
+        });
+      } catch (error) {
+        console.error('Erro no sistema de notificações:', error);
+        // Continua sem quebrar o timer
+      }
     }
   }, [remainingTime, activeTimer, isRunning, isPaused, notificationsSent, handleTimerComplete]);
 
   const handleStart = async () => {
-    setIsRunning(true);
-    setIsPaused(false);
-    
-    // Toca som de início
-    if (config.notifications.sound) {
-      try {
-        await notificationManager.current.playStartSound(
-          config.notifications.startSoundType || 'default',
-          config.notifications.startCustomAudioFile
-        );
-      } catch (error) {
-        console.warn('Erro ao tocar som de início:', error);
-        // Continua mesmo se o som falhar
+    try {
+      setIsRunning(true);
+      setIsPaused(false);
+      
+      // Toca som de início
+      if (config.notifications.sound) {
+        try {
+          await notificationManager.current.playStartSound(
+            config.notifications.startSoundType || 'default',
+            config.notifications.startCustomAudioFile
+          );
+        } catch (error) {
+          console.warn('Erro ao tocar som de início:', error);
+          // Continua mesmo se o som falhar
+        }
       }
+    } catch (error) {
+      console.error('Erro ao iniciar timer:', error);
+      // Reset para estado seguro
+      setIsRunning(false);
+      setIsPaused(false);
     }
   };
 
@@ -238,12 +323,14 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
     >
       {/* Header com informações do timer */}
       <div className="absolute top-8 left-8 right-8 flex justify-between items-center">
-        <button
+        <Button
           onClick={onBack}
-          className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm px-6 py-3 rounded-lg font-semibold transition-all"
+          variant="outline"
+          className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm border-white/20 text-white"
         >
-          ← Voltar
-        </button>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Voltar
+        </Button>
         
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-2">{activeTimer.config.name}</h1>
@@ -256,9 +343,9 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
         <div className="text-right">
           <div className="text-sm opacity-90">
             <div>Progresso: {progress.toFixed(1)}%</div>
-            <div className="text-xs">
-              {activeTimer.config.notifications.sound && '🔊 '}
-              {activeTimer.config.notifications.visual && '👁️ '}
+            <div className="text-xs flex items-center gap-2">
+              {activeTimer.config.notifications.sound && <Volume2 className="w-3 h-3" />}
+              {activeTimer.config.notifications.visual && <Eye className="w-3 h-3" />}
             </div>
           </div>
         </div>
@@ -288,27 +375,35 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
         {/* Controles */}
         <div className="flex gap-4 justify-center">
           {!isRunning ? (
-            <button
+            <Button
               onClick={handleStart}
-              className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm px-8 py-4 rounded-xl font-semibold text-xl transition-all"
+              size="lg"
+              className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm border-white/20 text-white text-xl px-8 py-4"
             >
-              ▶️ Iniciar
-            </button>
+              <Play className="w-5 h-5 mr-2" />
+              Iniciar
+            </Button>
           ) : (
-            <button
-              onClick={handlePause}
-              className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm px-8 py-4 rounded-xl font-semibold text-xl transition-all"
-            >
-              {isPaused ? '▶️ Continuar' : '⏸️ Pausar'}
-            </button>
+            <>
+              <Button
+                onClick={handlePause}
+                size="lg"
+                className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm border-white/20 text-white text-xl px-8 py-4"
+              >
+                {isPaused ? <Play className="w-5 h-5 mr-2" /> : <Pause className="w-5 h-5 mr-2" />}
+                {isPaused ? 'Continuar' : 'Pausar'}
+              </Button>
+              
+              <Button
+                onClick={handleStop}
+                size="lg"
+                className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm border-white/20 text-white text-xl px-8 py-4"
+              >
+                <Square className="w-5 h-5 mr-2" />
+                Parar
+              </Button>
+            </>
           )}
-          
-          <button
-            onClick={handleStop}
-            className="bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm px-8 py-4 rounded-xl font-semibold text-xl transition-all"
-          >
-            ⏹️ Parar
-          </button>
         </div>
       </div>
 
@@ -393,15 +488,15 @@ const TimerDisplayComponent: React.FC<TimerDisplayProps> = ({ config, onBack }) 
             )}
             
             {/* Botão de Fechar */}
-            <button
+            <Button
               onClick={() => setShowVideo(false)}
-              className="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-3 rounded-lg transition-all z-10"
+              variant="outline"
+              size="sm"
+              className="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white border-white/20 z-10"
               title="Fechar Vídeo"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+              <X className="w-4 h-4" />
+            </Button>
             
           </div>
         </div>
